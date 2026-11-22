@@ -1,6 +1,6 @@
 /* Крылья на рассвете — офлайн-кэш.
    После обновления файлов на GitHub поменяйте номер версии ниже (v1 → v2). */
-const CACHE = 'krylia-v1';
+const CACHE = 'krylia-v2';
 const FILES = ['./', 'index.html', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 
 self.addEventListener('install', function(e){

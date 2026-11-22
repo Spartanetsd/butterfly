@@ -57,6 +57,7 @@
   #final h2{margin:0;font:700 clamp(32px,8.8vw,58px)/1.08 var(--serif);color:#563a51;text-wrap:balance;
     text-shadow:0 2px 0 rgba(255,250,240,.75), 0 0 26px rgba(255,244,222,.95)}
   #final.show{opacity:1;transform:none}
+  #final p{margin:.45em 0 0;font:italic 600 clamp(17px,4.8vw,24px)/1.25 var(--serif);color:#7a5b6e;text-shadow:0 0 16px rgba(255,247,234,.95)}
 
   #hint{position:fixed;left:0;top:0;padding:10px 16px;border-radius:20px;background:rgba(255,250,242,.92);color:#5b3f55;
     font:600 17px/1 var(--sans);white-space:nowrap;box-shadow:0 6px 18px rgba(120,80,100,.18);pointer-events:none;opacity:0;transition:opacity .4s ease}
@@ -87,6 +88,7 @@
     #intro p{font:italic 600 clamp(16px,4.6vh,22px)/1.2 var(--serif);margin-top:.3em}
     #final{top:calc(env(safe-area-inset-top, 0px) + 14px)}
     #final h2{font:700 clamp(26px,7.6vh,44px)/1.05 var(--serif)}
+    #final p{font:italic 600 clamp(15px,4.4vh,20px)/1.2 var(--serif);margin-top:.25em}
     .big{bottom:calc(env(safe-area-inset-bottom, 0px) + 14px);min-height:56px}
   }
   @media (prefers-reduced-motion: reduce){
@@ -118,7 +120,7 @@
 </button>
 
 <div id="intro"><h1>Крылья на рассвете</h1><p>Кто спит в коконе?</p></div>
-<div id="final" aria-hidden="true"><h2>Ты разбудила луг!</h2></div>
+<div id="final" aria-hidden="true"><h2>Ты разбудила луг!</h2><p id="finalSub">Друзей луга найдено: 0 из 4</p></div>
 <div id="hint" aria-hidden="true">Коснись цветка</div>
 <button id="open" class="big breathe" type="button">Открыть кокон</button>
 <button id="again" class="big hide" type="button" disabled aria-hidden="true" tabindex="-1">Ещё раз</button>
@@ -162,10 +164,12 @@ function prng(seed){
 const $ = function(id){ return document.getElementById(id); };
 const cv = $('scene');
 const ctx = cv.getContext('2d', { alpha: false });
-const bg = document.createElement('canvas');
-const bgx = bg.getContext('2d');
+const landCv = document.createElement('canvas');
+const landx = landCv.getContext('2d');
+const cloudCv = document.createElement('canvas');
+const cloudx = cloudCv.getContext('2d');
 const elCounter = $('counter'), elCnt = $('cnt'), elSound = $('sound'), elIntro = $('intro');
-const elFinal = $('final'), elHint = $('hint'), elOpen = $('open'), elAgain = $('again'), elProbe = $('probe');
+const elFinal = $('final'), elHint = $('hint'), elOpen = $('open'), elAgain = $('again'), elProbe = $('probe'), elFinalSub = $('finalSub');
 
 /* уменьшение движения */
 const mq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
@@ -198,6 +202,12 @@ const BUT = {
 const GOLDS = ['#ffd66b', '#ffe59a', '#f5bf4c', '#fff1c2'];
 const LILACS = ['#c9b2f0', '#a98be0', '#e6dafb', '#ffe59a'];
 const PINKS = ['#ffd0de', '#ffe59a', '#f7a8c4', '#fff1c2'];
+const DAWN = [hex('#e3d5ec'), hex('#f1e0ea'), hex('#fde4d4'), hex('#fff1de')];
+const MORN = [hex('#d3e2f1'), hex('#e9eef0'), hex('#fdf0da'), hex('#fff7e6')];
+const SKY_AT = [0, 0.38, 0.72, 1];
+const RAINBOW = ['#f7b2c4', '#f9cfa6', '#f8e7a2', '#c9e2b2', '#b9d8ef', '#cdbbea'];
+const FRIEND_KINDS = ['ladybug', 'snail', 'hedgehog', 'bunny'];
+const HINTS = { touch: 'Коснись цветка', sleep: 'Посиди на бутоне', 'catch': 'Лови пыльцу!' };
 
 /* ================= раскладка ================= */
 let W = 0, H = 0, DPR = 1, S = 1, BS = 1, groundY = 0;
@@ -246,7 +256,7 @@ function computeLayout(){
     const q = i / 12;
     stemPts.push({ x: (1 - q) * (1 - q) * x0 + 2 * (1 - q) * q * cx + q * q * ax, y: (1 - q) * (1 - q) * y0 + 2 * (1 - q) * q * cy + q * q * ay });
   }
-  const fr = elFinal.firstElementChild.getBoundingClientRect();
+  const fr = elFinal.getBoundingClientRect();
   finalBottom = fr.bottom - 10;
   againTop = elAgain.getBoundingClientRect().top - 16;
 }
@@ -274,7 +284,7 @@ function relayout(w, h, d){
   if (oldW && b.vis){ b.x = clamp(rx * W, lim.l, lim.r); b.y = clamp(ry * H, lim.t, lim.b); b.vx = 0; b.vy = 0; }
   ptr.target = null;
   for (let i = parts.length - 1; i >= 0; i--) if (parts[i].kind !== 2) { parts[i] = parts[parts.length - 1]; parts.pop(); }
-  if (G.hintOn) placeHint();
+  if (G.hint) placeHint();
 }
 
 function makePaints(){
@@ -288,24 +298,10 @@ function makePaints(){
 
 /* ================= фон (рисуется один раз на размер) ================= */
 function paintBackdrop(){
-  bg.width = cv.width; bg.height = cv.height;
-  const g = bgx;
-  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cloudCv.width = landCv.width = cv.width; cloudCv.height = landCv.height = cv.height;
   const R = prng(20261122);
-  // небо
-  let gr = g.createLinearGradient(0, 0, 0, groundY);
-  gr.addColorStop(0, '#e3d5ec'); gr.addColorStop(0.38, '#f1e0ea'); gr.addColorStop(0.72, '#fde4d4'); gr.addColorStop(1, '#fff1de');
-  g.fillStyle = gr; g.fillRect(0, 0, W, groundY + 6);
-  // солнце и тёплый свет
-  const sx = W * 0.7, sy = groundY - Math.min(H * 0.06, 60);
-  const big = Math.max(W, H);
-  gr = g.createRadialGradient(sx, sy, 0, sx, sy, big * 0.62);
-  gr.addColorStop(0, 'rgba(255,248,228,.95)'); gr.addColorStop(0.16, 'rgba(255,237,208,.6)');
-  gr.addColorStop(0.5, 'rgba(255,226,214,.18)'); gr.addColorStop(1, 'rgba(255,226,214,0)');
-  g.fillStyle = gr; g.fillRect(0, 0, W, H);
-  g.fillStyle = 'rgba(255,251,240,.92)';
-  g.beginPath(); g.arc(sx, sy, 24 * S, 0, TAU); g.fill();
-  // облака
+  let g = cloudx;
+  g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, W, H);
   for (let i = 0; i < 5; i++){
     const cx = R() * W, cy = groundY * (0.16 + R() * 0.5), cw = (60 + R() * 120) * S;
     const tint = R() < 0.5 ? '255,240,236' : '246,232,246';
@@ -314,7 +310,8 @@ function paintBackdrop(){
       g.beginPath(); g.ellipse(cx + (k - 1.5) * cw * 0.28, cy - Math.sin(k * 1.3) * cw * 0.06, cw * (0.22 + R() * 0.12), cw * (0.07 + R() * 0.05), 0, 0, TAU); g.fill();
     }
   }
-  // холмы в дымке
+  g = landx;
+  g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, W, H);
   const layers = [
     { y: groundY - H * 0.10, a: H * 0.030, col: '#d9cedd', mist: 0.55, trees: 0, tc: '#c9c3d2' },
     { y: groundY - H * 0.062, a: H * 0.026, col: '#cad1c1', mist: 0.45, trees: 5, tc: '#b4c0ab' },
@@ -427,13 +424,15 @@ const G = {
   state: 'title', t: 0, stT: 0, count: 0, stage: 0,
   lilac: 0, lilacT: 0, gold: 0, goldT: 0, gilt: 0, giltT: 0,
   spot: 0, idle: 0, fade: 0, fadeDir: 0, waveR: 0, waveT: 0, originF: null,
-  cocOpen: 0, cocRot: 0, twitch: 0, hintOn: false, nearest: null,
-  guideAcc: 0, sparkAcc: 0, ambAcc: 0, trailAcc: 0, melody: false
+  cocOpen: 0, cocRot: 0, twitch: 0, nearest: null,
+  guideAcc: 0, sparkAcc: 0, ambAcc: 0, trailAcc: 0, melody: false,
+  sun: 0, sunT: 0, rainbow: 0, rainbowT: 0, bees: 0, beesT: 0, bend: 0, gust: null, windAcc: 0,
+  spin: -1, hint: null, hintF: null, hintDone: {}, friendsFound: 0
 };
 const b = { x: 0, y: 0, vx: 0, vy: 0, tilt: 0, ph: 0, amp: 0, open: 0.12, sc: 0.72, glow: 0, vis: false };
 const ptr = { down: false, id: -1, target: null };
 const keys = { l: false, r: false, u: false, d: false };
-let flowers = [], seedOrder = [], decos = [], parts = [], flying = [], timers = [];
+let flowers = [], seedOrder = [], decos = [], parts = [], flying = [], timers = [], friends = [];
 
 function MAXV(){ return 780 * S; }
 function KSPD(){ return 340 * S; }
@@ -469,9 +468,10 @@ function bestSpot(pts, o){
     if (!clearOf(x, y)) continue;
     let m = 1e9; for (const q of pts){ const d = hyp(q.x - x, q.y - y); if (d < m) m = d; }
     let md = 1e9; for (const q of decos){ const d = hyp(q.x - x, q.y - y); if (d < md) md = d; }
+    let mf = 1e9; for (const q of friends){ const d = hyp(q.x - x, q.y - 12 * S - y); if (d < mf) mf = d; }
     let sc;
-    if (o.near) sc = -Math.abs(hyp(x - o.near.x, y - o.near.y) - o.nearD) - (m < gap ? 500 : 0) - (md < 22 * S ? 60 : 0) - (y < o.near.y + 120 * S ? 120 : 0);
-    else sc = Math.min(m, md * 2.4 + gap * 0.4);
+    if (o.near) sc = -Math.abs(hyp(x - o.near.x, y - o.near.y) - o.nearD) - (m < gap ? 500 : 0) - (md < 22 * S ? 60 : 0) - (y < o.near.y + 120 * S ? 120 : 0) - (mf < 66 * S ? 300 : 0);
+    else sc = Math.min(m, md * 2.4 + gap * 0.4, mf < 66 * S ? mf * 0.3 : mf * 1.1);
     if (sc > bs){ bs = sc; best = { x: x, y: y }; }
   }
   return best || { x: (field.l + field.r) / 2 + rnd(-20, 20), y: (field.t + field.b) / 2 + rnd(-20, 20) };
@@ -491,7 +491,8 @@ function spotNear(f, placed, gap){
 
 function makeFlower(x, y, group, idx){
   const f = {
-    seed: true, group: group, idx: idx, kind: KIND[group], st: 0, g: 0, open: 0.42, bt: 0, pulse: -1,
+    seed: true, group: group, mode: group, idx: idx, kind: KIND[group], st: 0, g: 0, open: 0.32, bt: 0, pulse: -1,
+    wake: 0, tick: 0, airX: x, airY: y, puffed: false,
     ph: rnd(0, TAU), sc: rnd(0.93, 1.1), lean: rnd(-1, 1), stem: rnd(0.85, 1.15), rot: rnd(-0.3, 0.3),
     leafSide: Math.random() < 0.5 ? -1 : 1, x: x, y: y, hx: x, hy: y,
     u: (x - field.l) / field.w, v: (y - field.t) / field.h
@@ -518,6 +519,7 @@ function look(f){
   f.sStem = css(mixc(STEM, MIST, k * 0.8));
   f.sLeaf = css(mixc(LEAF, MIST, k * 0.8));
   f.sBud = css(mixc(mixc(K.petal, STEM, 0.45), MIST, k));
+  f.sBudLive = css(mixc(K.petal, MIST, k * 0.6));
   f.gP = ctx.createRadialGradient(0, 0, 1, 0, 0, 21);
   f.gP.addColorStop(0, css(cL)); f.gP.addColorStop(0.5, css(mixc(cL, cP, 0.6))); f.gP.addColorStop(1, css(cP));
   f.gM = ctx.createRadialGradient(-1.5, -1.5, 0.5, 0, 0, 6.5);
@@ -561,6 +563,8 @@ function planSeeds(){
 function remapWorld(){
   for (const d of decos){ d.x = d.u * W; d.y = groundY + d.v * (H - groundY); look(d); }
   decos.sort(function(a, c){ return a.y - c.y; });
+  for (const fr of friends){ fr.x = fr.u * W; fr.y = groundY + fr.v * (H - groundY); lookFriend(fr); }
+  friends.sort(function(a, c){ return a.y - c.y; });
   if (!flowers.length) return;
   for (const f of flowers){ f.x = field.l + f.u * field.w; f.y = field.t + f.v * field.h; }
   const gap = minGap();
@@ -575,7 +579,7 @@ function remapWorld(){
     }
     placed.push(f);
   }
-  for (const f of flowers) look(f);
+  for (const f of flowers){ look(f); if (f.st === 7){ f.sx0 = f.x; f.sy0 = f.y; } }
   sortSeeds();
 }
 
@@ -617,7 +621,8 @@ function trail(dt, sp){
   }
 }
 function guide(f){
-  const dx = f.x - b.x, dy = f.y - b.y, d = Math.max(1, hyp(dx, dy)), v = 150 * S;
+  const gx = f.st === 7 ? f.airX : f.x, gy = f.st === 7 ? f.airY : f.y;
+  const dx = gx - b.x, dy = gy - b.y, d = Math.max(1, hyp(dx, dy)), v = 150 * S;
   addP({ kind: 3, x: b.x + rnd(-6, 6) * S, y: b.y + rnd(-6, 6) * S, vx: dx / d * v, vy: dy / d * v, g: 0, drag: 1,
     dur: clamp(d / v, 0.3, 1.8) * 0.92, r: rnd(1.6, 2.6) * S, col: '#ffe08a', a: 0.85 });
 }
@@ -695,12 +700,12 @@ function head(f, open, alpha){
   ctx.beginPath(); ctx.arc(-1.6, -1.2, 0.8, 0, TAU); ctx.arc(1.4, -0.4, 0.7, 0, TAU); ctx.arc(-0.2, 1.6, 0.7, 0, TAU); ctx.fill();
   ctx.globalAlpha = 1;
 }
-function bud(f, alpha){
+function bud(f, alpha, col){
   if (alpha <= 0.01) return;
   ctx.globalAlpha = alpha;
   ctx.fillStyle = f.sStem;
   ctx.beginPath(); ctx.moveTo(-5, 2); ctx.quadraticCurveTo(-7, -4, -1, -6); ctx.lineTo(1, -6); ctx.quadraticCurveTo(7, -4, 5, 2); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = f.sBud;
+  ctx.fillStyle = col || f.sBud;
   ctx.beginPath(); ctx.moveTo(0, -17); ctx.quadraticCurveTo(7, -9, 4.5, -1); ctx.quadraticCurveTo(0, 2, -4.5, -1); ctx.quadraticCurveTo(-7, -9, 0, -17); ctx.fill();
   ctx.strokeStyle = f.sEdge; ctx.lineWidth = 1; ctx.globalAlpha = alpha * 0.45; ctx.stroke();
   ctx.globalAlpha = 1;
@@ -711,7 +716,7 @@ function drawFlower(f, t){
   if (gr <= 0.001) return;
   const grs = f.st === 1 ? (calm ? ease(gr) : backOut(gr)) : 1;
   const s = f.s, g1 = Math.min(1, gr);
-  const sway = calm ? 0 : Math.sin(t * 1.1 + f.ph) * 0.045;
+  const sway = (calm ? 0 : Math.sin(t * 1.1 + f.ph) * 0.045) + G.bend * (0.6 + 0.4 * f.depth);
   const len = (f.seed ? (36 + 30 * f.depth) : (18 + 22 * f.depth)) * S * f.stem;
   const bx = f.x - f.lean * len * 0.18, by = f.y + len;
   const hx = lerp(bx, f.x + sway * len, g1), hy = lerp(by, f.y, g1);
@@ -738,7 +743,8 @@ function drawFlower(f, t){
   let k = s * grs;
   if (f.pulse >= 0 && f.pulse < 0.8 && !calm) k *= 1 + 0.14 * Math.sin(Math.PI * clamp(f.pulse / 0.7, 0, 1));
   ctx.scale(k, k); ctx.rotate(f.rot + sway * 0.8);
-  if (f.st === 4) bud(f, 1);
+  if (f.seed && f.mode === 1 && (f.st === 1 || f.st === 2)) sleepyBud(f);
+  else if (f.st === 4) bud(f, 1);
   else if (f.st === 6) head(f, 0.62 + (f.woke ? 0.4 * (calm ? ease(f.bt) : backOut(f.bt)) : 0), 1);
   else if (f.st === 5){
     const w = f.bt;
@@ -769,6 +775,7 @@ function drawSeed(f, t){
   ctx.strokeStyle = 'rgba(200,130,40,.55)'; ctx.lineWidth = 0.9; ctx.stroke();
   ctx.fillStyle = 'rgba(255,253,236,.95)'; ctx.beginPath(); ctx.ellipse(-1.6, -2.2, 1.4, 2, 0, 0, TAU); ctx.fill();
   ctx.restore();
+  if (f.mode === 2) fluff(x, y, s, t, f.ph);
   const tw = Math.pow(0.5 + 0.5 * Math.sin(t * 3.1 + f.ph * 2), 6);
   if (tw > 0.05){ ctx.globalAlpha = tw; ctx.fillStyle = '#fffbe6'; star(x + 8 * s, y - 9 * s, 5.5 * s * (0.6 + 0.4 * tw)); ctx.globalAlpha = 1; }
 }
@@ -869,7 +876,8 @@ function flapOpen(open){
 }
 function drawFlyB(){
   const bob = calm ? 0 : Math.cos(b.ph) * 1.4 * S * b.amp;
-  drawButterfly(b.x, b.y + bob, b.sc, b.tilt, flapOpen(b.open), b.glow);
+  const spin = (G.spin >= 0 && !calm) ? TAU * easeInOut(G.spin / 0.75) : 0;
+  drawButterfly(b.x, b.y + bob, b.sc, b.tilt + spin, flapOpen(b.open), b.glow);
 }
 
 /* ---------- кокон ---------- */
@@ -1033,7 +1041,7 @@ function drawDew(t){
 }
 function drawBlades(t){
   for (const bl of blades){
-    const sw = calm ? 0 : Math.sin(t * 1.3 + bl.ph) * 0.09;
+    const sw = (calm ? 0 : Math.sin(t * 1.3 + bl.ph) * 0.09) + G.bend * 1.2;
     const tipX = bl.x + bl.lean + sw * bl.h, tipY = H - bl.h, mx = (tipX - bl.x) * 0.35;
     ctx.fillStyle = bl.col;
     ctx.beginPath(); ctx.moveTo(bl.x - bl.w / 2, H + 2);
@@ -1055,7 +1063,7 @@ function drawWarmth(){
 }
 function drawParts(layer){
   for (const p of parts){
-    const top = p.kind === 1 || p.kind === 2;
+    const top = p.kind === 1 || p.kind === 2 || p.kind >= 4;
     if (top !== (layer === 1)) continue;
     const a = p.a * Math.min(1, (p.max - p.life) / 0.12) * Math.min(1, p.life / (p.max * 0.45));
     if (a <= 0.01) continue;
@@ -1064,6 +1072,10 @@ function drawParts(layer){
     else if (p.kind === 2){
       ctx.globalAlpha = a * 0.3; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2.6, 0, TAU); ctx.fill();
       ctx.globalAlpha = a; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+    } else if (p.kind === 4){ ctx.globalAlpha = a; heart(p.x, p.y, p.r); }
+    else if (p.kind === 5){
+      ctx.globalAlpha = a * 0.55; ctx.strokeStyle = p.col; ctx.lineWidth = 1.6 * S; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.quadraticCurveTo(p.x - 14 * S, p.y - 4 * S, p.x - 32 * S, p.y); ctx.stroke();
     } else { ctx.globalAlpha = a; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill(); }
   }
   ctx.globalAlpha = 1;
@@ -1094,21 +1106,385 @@ function render(){
   const t = G.t;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.globalAlpha = 1;
-  ctx.drawImage(bg, 0, 0, W, H);
+  drawSky();
   drawMotes(t);
   drawDew(t);
   for (const d of decos) drawFlower(d, t);
+  drawBees(t);
+  for (const fr of friends) drawFriend(fr, t);
   drawCocoonScene();
   for (const f of seedOrder) drawFlower(f, t);
   drawWarmth();
   drawBlades(t);
-  for (const f of seedOrder) if (f.st === 1 || f.st === 2) drawSeed(f, t);
+  for (const f of seedOrder){
+    if (f.mode === 1){ if (f.st === 1 || f.st === 2) drawSleepMarks(f, t); }
+    else if (f.st === 1 || f.st === 2) drawSeed(f, t);
+  }
+  for (const f of flowers) if (f.st === 7) drawAirSeed(f, t);
   drawParts(0);
   if (b.vis) drawFlyB();
   drawFlying();
   drawParts(1);
   if (G.spot > 0.003) drawSpot();
   if (G.fade > 0.001){ ctx.fillStyle = 'rgba(255,246,236,' + G.fade.toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); }
+}
+
+/* ---------- небо: рассвет становится утром по мере игры ---------- */
+function drawSky(){
+  const p = G.sun;
+  const gr = ctx.createLinearGradient(0, 0, 0, groundY);
+  for (let i = 0; i < 4; i++) gr.addColorStop(SKY_AT[i], css(mixc(DAWN[i], MORN[i], p)));
+  ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+  const sx = W * 0.7, sy = lerp(groundY - Math.min(H * 0.06, 60), groundY * 0.36, ease(p));
+  const big = Math.max(W, H);
+  const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, big * 0.62);
+  sg.addColorStop(0, 'rgba(255,248,228,.95)'); sg.addColorStop(0.16, 'rgba(255,237,208,' + (0.6 + 0.2 * p).toFixed(3) + ')');
+  sg.addColorStop(0.5, 'rgba(255,226,214,.18)'); sg.addColorStop(1, 'rgba(255,226,214,0)');
+  ctx.fillStyle = sg; ctx.fillRect(0, 0, W, groundY + 10);
+  ctx.fillStyle = 'rgba(255,251,240,.95)';
+  ctx.beginPath(); ctx.arc(sx, sy, (24 + 5 * p) * S, 0, TAU); ctx.fill();
+  if (G.rainbow > 0.01) drawRainbow();
+  ctx.drawImage(cloudCv, 0, 0, W, H);
+  ctx.drawImage(landCv, 0, 0, W, H);
+  if (p > 0.01){ ctx.fillStyle = 'rgba(255,244,212,' + (0.12 * p).toFixed(3) + ')'; ctx.fillRect(0, groundY - H * 0.14, W, H); }
+}
+function drawRainbow(){
+  const cx = W * 0.32, cy = groundY + H * 0.04, R0 = Math.min(W, H) * 0.62;
+  ctx.lineWidth = 7 * S; ctx.lineCap = 'butt';
+  for (let i = 0; i < RAINBOW.length; i++){
+    ctx.globalAlpha = 0.32 * G.rainbow; ctx.strokeStyle = RAINBOW[i];
+    ctx.beginPath(); ctx.arc(cx, cy, R0 - i * 6.6 * S, Math.PI, TAU); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- пчёлки прилетают после первого этапа ---------- */
+function drawBees(t){
+  if (G.bees <= 0.01) return;
+  const sp = calm ? 0.4 : 1;
+  for (let i = 0; i < 2; i++){
+    const ph = i * 2.1;
+    const x = W * (0.5 + 0.42 * Math.sin(t * 0.21 * sp + ph));
+    const y = groundY + (H - groundY) * (0.1 + 0.08 * Math.sin(t * 0.43 * sp + ph * 1.7)) + (calm ? 0 : Math.sin(t * 6 + ph) * 2 * S);
+    const dir = Math.cos(t * 0.21 * sp + ph) >= 0 ? 1 : -1;
+    ctx.globalAlpha = G.bees;
+    ctx.save(); ctx.translate(x, y); ctx.scale(S * dir * 1.1, S * 1.1);
+    const wf = calm ? 0.8 : 0.55 + 0.45 * Math.abs(Math.sin(t * 38 + ph));
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
+    ctx.beginPath(); ctx.ellipse(-1.5, -5.5, 3.2, 5 * wf, -0.45, 0, TAU); ctx.ellipse(1.8, -5.5, 3, 4.6 * wf, 0.45, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#f6c845'; ctx.beginPath(); ctx.ellipse(0, 0, 6.5, 4.6, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#5a4250';
+    ctx.beginPath(); ctx.ellipse(-1.9, 0, 0.95, 4.3, 0, 0, TAU); ctx.ellipse(1.2, 0, 0.95, 4.5, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(4.4, -0.8, 0.9, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- сердечки ---------- */
+function heart(x, y, r){
+  ctx.beginPath(); ctx.moveTo(x, y + r);
+  ctx.quadraticCurveTo(x - r * 1.4, y - r * 0.1, x - r * 0.7, y - r * 0.75);
+  ctx.quadraticCurveTo(x - r * 0.2, y - r * 1.15, x, y - r * 0.45);
+  ctx.quadraticCurveTo(x + r * 0.2, y - r * 1.15, x + r * 0.7, y - r * 0.75);
+  ctx.quadraticCurveTo(x + r * 1.4, y - r * 0.1, x, y + r);
+  ctx.fill();
+}
+function hearts(x, y, n){
+  for (let i = 0; i < n; i++){
+    addP({ kind: 4, x: x + rnd(-10, 10) * S, y: y, vx: rnd(-22, 22) * S, vy: -rnd(30, 62) * S, g: -6 * S, drag: 0.98,
+      dur: rnd(0.9, 1.4), r: rnd(4, 6) * S, col: pick(['#ff9fb8', '#ffb8c8', '#ff8fb0']), a: 1 });
+  }
+}
+
+/* ---------- сонный бутон (второй этап) ---------- */
+function sleepyBud(f){
+  const w = f.wake;
+  if (w > 0.02) head(f, 0.1 + 0.35 * w, 0.25 + 0.75 * w);
+  ctx.save(); const k = 1.45 - 0.3 * w; ctx.scale(k, k);
+  bud(f, 1 - 0.8 * w, f.sBudLive);
+  ctx.restore();
+}
+function drawSleepMarks(f, t){
+  const s = f.s * (f.st === 1 ? easeOut(span(f.g, 0.35, 1)) : 1);
+  if (s <= 0.01) return;
+  const x = f.hx, y = f.hy - 6 * s, w = f.wake;
+  const near = f === G.nearest ? 1 : 0;
+  const pulse = 0.5 + 0.5 * Math.sin(t * (calm ? 1.3 : 2.2) + f.ph);
+  const R = (28 + 4 * pulse + 6 * near) * s;
+  const gr = ctx.createRadialGradient(x, y, 0, x, y, R);
+  gr.addColorStop(0, 'rgba(240,228,255,' + (0.5 + 0.35 * w).toFixed(3) + ')'); gr.addColorStop(1, 'rgba(214,194,250,0)');
+  ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
+  const rr = 23 * s;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 3 * s; ctx.strokeStyle = 'rgba(255,255,255,' + (0.4 + 0.25 * pulse).toFixed(3) + ')';
+  ctx.beginPath(); ctx.arc(x, y, rr, 0, TAU); ctx.stroke();
+  if (w > 0.01){
+    ctx.lineWidth = 4 * s; ctx.strokeStyle = '#ffd25e';
+    ctx.beginPath(); ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + TAU * w); ctx.stroke();
+  }
+  if (w < 0.98){
+    const mx = x + 16 * s, my = y - 26 * s + (calm ? 0 : Math.sin(t * 1.6 + f.ph) * 2 * s);
+    ctx.globalAlpha = 1 - w; ctx.fillStyle = '#fff2c4';
+    ctx.beginPath();
+    ctx.arc(mx, my, 6.5 * s, 0.35 * Math.PI, 1.65 * Math.PI, false);
+    ctx.arc(mx + 3.2 * s, my - 1.2 * s, 5.4 * s, 1.55 * Math.PI, 0.45 * Math.PI, true);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- пыльца-пушинка (третий этап) ---------- */
+function fluff(x, y, s, t, ph){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.rotate(calm ? 0 : Math.sin(t * 1.7 + ph) * 0.15);
+  ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = 0.9; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, -5); ctx.lineTo(0, -13);
+  for (let i = 0; i < 7; i++){ const a = -Math.PI / 2 + (i - 3) * 0.33; ctx.moveTo(0, -13); ctx.lineTo(Math.cos(a) * 9, -13 + Math.sin(a) * 9); }
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.96)';
+  ctx.beginPath();
+  for (let i = 0; i < 7; i++){ const a = -Math.PI / 2 + (i - 3) * 0.33; dot(Math.cos(a) * 9, -13 + Math.sin(a) * 9, 1.15); }
+  ctx.fill();
+  ctx.restore();
+}
+function drawAirSeed(f, t){
+  const s = Math.max(f.s, 0.95 * S), x = f.airX, y = f.airY;
+  const near = f === G.nearest ? 1 : 0, pulse = 0.5 + 0.5 * Math.sin(t * 2.6 + f.ph);
+  const R = (26 + 5 * pulse + 6 * near) * s;
+  const gr = ctx.createRadialGradient(x, y, 0, x, y, R);
+  gr.addColorStop(0, 'rgba(255,240,170,.85)'); gr.addColorStop(0.35, 'rgba(255,214,110,' + (0.36 + 0.12 * pulse + 0.12 * near).toFixed(3) + ')'); gr.addColorStop(1, 'rgba(255,214,110,0)');
+  ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.rotate(0.25);
+  ctx.fillStyle = grainG; ctx.beginPath(); ctx.ellipse(0, 0, 4.8, 6.3, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(200,130,40,.55)'; ctx.lineWidth = 0.9; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,253,236,.95)'; ctx.beginPath(); ctx.ellipse(-1.6, -2.2, 1.4, 2, 0, 0, TAU); ctx.fill();
+  ctx.restore();
+  fluff(x, y, s, t, f.ph);
+}
+function airBox(){
+  const hb = Math.max(hudRects[0].b, hudRects[1].b);
+  return { l: field.l + 10 * S, r: field.r - 10 * S, t: Math.max(hb + 26, lim.t + 26 * S), b: field.b - 6 * S };
+}
+function liftSeed(f){
+  if (f.st !== 2) return;
+  f.st = 7; f.lt0 = G.t; f.sx0 = f.hx; f.sy0 = f.hy;
+  f.w1 = rnd(0.5, 0.8) * (calm ? 0.6 : 1); f.w2 = rnd(0.65, 1.05) * (calm ? 0.6 : 1);
+  f.p1 = rnd(0, TAU); f.p2 = rnd(0, TAU); f.lift = rnd(70, 120) * S;
+  f.pfx = f.pfy = f.pvx = f.pvy = 0; f.puffed = false;
+  f.airX = f.hx; f.airY = f.hy;
+  burst(f.hx, f.hy, calm ? 2 : 4, ['#ffffff', '#fff1c2']);
+}
+function updAir(f, dt){
+  const B = airBox();
+  const ax = (calm ? 26 : 55) * S, ay = (calm ? 16 : 34) * S;
+  const cx = clamp(f.x, B.l + ax, Math.max(B.l + ax, B.r - ax));
+  const cy = clamp(f.y - f.lift, B.t + ay, Math.max(B.t + ay, B.b - ay));
+  const tt = G.t - f.lt0;
+  const ox = Math.sin(tt * f.w1 + f.p1) * ax, oy = Math.sin(tt * f.w2 + f.p2) * ay;
+  const k = easeOut(span(tt, 0, 1.2));
+  const e1 = Math.exp(-dt * 3), e2 = Math.exp(-dt * 0.5);
+  f.pvx *= e1; f.pvy *= e1;
+  f.pfx = (f.pfx + f.pvx * dt) * e2; f.pfy = (f.pfy + f.pvy * dt) * e2;
+  f.airX = clamp(lerp(f.sx0, cx + ox, k) + f.pfx, B.l, B.r);
+  f.airY = clamp(lerp(f.sy0, cy + oy, k) + f.pfy, B.t, B.b);
+}
+function startGust(){
+  if (G.state !== 'fly') return;
+  G.gust = { t0: G.t };
+  Snd.gust();
+  later(1.4, function(){ showHint('catch'); });
+}
+function updGust(dt){
+  if (!G.gust){ G.bend = approach(G.bend, 0, dt * 0.5); return; }
+  const gt = G.t - G.gust.t0, front = -60 * S + gt * (W + 120 * S) / 1.3;
+  G.bend = (calm ? 0.06 : 0.22) * Math.sin(Math.PI * clamp(gt / 1.7, 0, 1));
+  if (gt < 1.4){
+    G.windAcc += dt * (calm ? 6 : 42);
+    while (G.windAcc >= 1){
+      G.windAcc -= 1;
+      addP({ kind: 5, x: front - rnd(0, 140) * S, y: rnd(groundY - H * 0.25, H * 0.9), vx: 560 * S, vy: rnd(-18, 18) * S, g: 0, drag: 1, dur: rnd(0.35, 0.6), r: 1, col: '#ffffff', a: 0.9 });
+    }
+  }
+  if (G.state === 'fly') for (const f of flowers) if (f.mode === 2 && f.st === 2 && f.hx < front) liftSeed(f);
+  if (gt > 2.2) G.gust = null;
+}
+
+/* ---------- друзья луга ---------- */
+function lookFriend(fr){ const d = clamp((fr.y - groundY) / Math.max(1, H - groundY), 0, 1); fr.s = S * (0.72 + 0.5 * d); }
+function planFriends(){
+  friends = [];
+  for (let i = 0; i < FRIEND_KINDS.length; i++){
+    let best = null, bs = -1;
+    for (let k = 0; k < 40; k++){
+      const x = rnd(safe.l + 34 * S, W - safe.r - 34 * S);
+      const y = rnd(groundY + (H - groundY) * 0.22, H - safe.b - 46 * S);
+      if (hyp(x - coc.x, y - coc.y) < 84 * S) continue;
+      let bad = false;
+      for (const p of stemPts) if (hyp(x - p.x, y - p.y) < 36 * S){ bad = true; break; }
+      if (bad) continue;
+      let m = 1e9;
+      for (const q of friends) m = Math.min(m, hyp(q.x - x, q.y - y));
+      for (const q of decos) m = Math.min(m, hyp(q.x - x, q.y - y) * 2.2);
+      if (m > bs){ bs = m; best = { x: x, y: y }; }
+    }
+    if (!best) best = { x: rnd(W * 0.2, W * 0.8), y: groundY + (H - groundY) * 0.6 };
+    const fr = { kind: FRIEND_KINDS[i], x: best.x, y: best.y, u: best.x / W, v: (best.y - groundY) / Math.max(1, H - groundY),
+      awake: false, found: false, wt: 0, ph: rnd(0, TAU), s: 1, look: 0 };
+    lookFriend(fr);
+    friends.push(fr);
+  }
+  friends.sort(function(a, c){ return a.y - c.y; });
+}
+function wakeFriend(fr, byPlayer){
+  if (fr.awake) return;
+  fr.awake = true; fr.wt = 0; fr.found = byPlayer;
+  if (byPlayer){ G.friendsFound++; G.idle = 0; Snd.friend(fr.kind); hearts(fr.x, fr.y - 26 * fr.s, calm ? 3 : 6); }
+}
+function updFriends(dt){
+  for (const fr of friends){
+    if (fr.awake && fr.wt < 1) fr.wt = Math.min(1, fr.wt + dt / (calm ? 0.5 : 0.7));
+    if (fr.awake && b.vis){ const tg = clamp((b.x - fr.x) / (60 * S), -1, 1); fr.look += (tg - fr.look) * (1 - Math.exp(-dt * 6)); }
+    if (!fr.awake && !calm && G.state === 'fly' && Math.random() < dt * 0.22)
+      addP({ kind: 1, x: fr.x + rnd(-10, 10) * fr.s, y: fr.y - rnd(8, 22) * fr.s, vx: 0, vy: -6 * S, g: 0, drag: 1, dur: 0.9, r: rnd(2, 3) * S, col: '#fff6d8', a: 0.85 });
+  }
+}
+function eyes(x1, x2, y, r, lk, open){
+  if (!open){
+    ctx.strokeStyle = '#3a2a33'; ctx.lineWidth = 1.1; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x1 - r, y); ctx.quadraticCurveTo(x1, y + r * 0.8, x1 + r, y); ctx.moveTo(x2 - r, y); ctx.quadraticCurveTo(x2, y + r * 0.8, x2 + r, y); ctx.stroke();
+    return;
+  }
+  const o = lk * r * 0.35;
+  ctx.fillStyle = '#2e2130'; ctx.beginPath(); dot(x1 + o, y, r); dot(x2 + o, y, r); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); dot(x1 + o + r * 0.35, y - r * 0.4, r * 0.38); dot(x2 + o + r * 0.35, y - r * 0.4, r * 0.38); ctx.fill();
+}
+function drawFriend(fr, t){
+  const w = fr.awake ? (calm ? ease(fr.wt) : fr.wt) : 0;
+  const open = fr.awake && w > 0.3 && ((t + fr.ph) % 4.2) > 0.14;
+  ctx.save(); ctx.translate(fr.x, fr.y); ctx.scale(fr.s, fr.s);
+  ctx.fillStyle = 'rgba(60,92,52,.14)'; ctx.beginPath(); ctx.ellipse(0, 1, 16, 3.5, 0, 0, TAU); ctx.fill();
+  if (fr.kind === 'ladybug') friendLadybug(fr, w, t, open);
+  else if (fr.kind === 'snail') friendSnail(fr, w, t, open);
+  else if (fr.kind === 'hedgehog') friendHedgehog(fr, w, t, open);
+  else friendBunny(fr, w, t, open);
+  ctx.restore();
+}
+function friendLadybug(fr, w, t, open){
+  ctx.fillStyle = '#86ae6d';
+  ctx.beginPath(); ctx.moveTo(-21, 0); ctx.quadraticCurveTo(-2, -12, 21, -2); ctx.quadraticCurveTo(0, 9, -21, 0); ctx.fill();
+  ctx.strokeStyle = 'rgba(60,100,50,.4)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-18, 0); ctx.quadraticCurveTo(0, -3, 19, -2); ctx.stroke();
+  const hop = (calm || !fr.awake) ? 0 : Math.sin(Math.PI * clamp(fr.wt * 1.5, 0, 1)) * 7;
+  ctx.save(); ctx.translate(0, -7 - hop);
+  const fl = fr.awake && !calm ? Math.max(0, Math.sin(t * 2.2 + fr.ph)) : 0;
+  if (fl > 0.7){
+    const a = 0.5 + 0.5 * Math.sin(t * 40);
+    ctx.fillStyle = 'rgba(255,255,255,.65)';
+    ctx.beginPath(); ctx.ellipse(-6, -7, 7, 3.4 * a + 1, -0.6, 0, TAU); ctx.ellipse(4, -8, 7, 3.4 * a + 1, 0.5, 0, TAU); ctx.fill();
+  }
+  const hx = lerp(7, 10, w), hy = lerp(1, -1, w);
+  if (w > 0.2){
+    ctx.strokeStyle = '#3a2a33'; ctx.lineWidth = 1; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(hx, hy - 4); ctx.quadraticCurveTo(hx + 1, hy - 9, hx + 4, hy - 10); ctx.moveTo(hx + 2, hy - 4); ctx.quadraticCurveTo(hx + 4, hy - 8, hx + 7, hy - 8); ctx.stroke();
+  }
+  ctx.fillStyle = '#3a2a33'; ctx.beginPath(); ctx.arc(hx, hy, 5.3, 0, TAU); ctx.fill();
+  const sg = ctx.createRadialGradient(-4, -5, 1, -1, -1, 12);
+  sg.addColorStop(0, '#ff8c8c'); sg.addColorStop(1, '#d9373f');
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(-1, -1, 10.5, 8, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(60,20,30,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-1, -9); ctx.quadraticCurveTo(1, -1, -1, 7); ctx.stroke();
+  ctx.fillStyle = '#3a2a33'; ctx.beginPath(); dot(-6, -3, 2); dot(-4, 3.5, 1.6); dot(4, -4, 1.9); dot(4.5, 3, 1.5); dot(-1, -6.5, 1.2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.45)'; ctx.beginPath(); ctx.ellipse(-5, -5.5, 3, 1.6, -0.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  if (w > 0.3) eyes(hx + 0.6, hx + 3.4, hy - 0.8, 1.3, fr.look, open);
+  ctx.restore();
+}
+function friendSnail(fr, w, t, open){
+  const ext = 3 + 15 * w;
+  ctx.fillStyle = '#ebe0bd';
+  ctx.beginPath(); ctx.moveTo(-15, 0); ctx.lineTo(ext + 2, 0); ctx.quadraticCurveTo(ext + 9, 0, ext + 8, -6);
+  ctx.quadraticCurveTo(ext + 7, -12, ext, -11); ctx.quadraticCurveTo(ext - 6, -10, ext - 7, -4); ctx.lineTo(-11, -3); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(150,130,90,.45)'; ctx.lineWidth = 1; ctx.stroke();
+  if (w > 0.15){
+    const st = 9 * w, lk = fr.look;
+    ctx.strokeStyle = '#d4c69b'; ctx.lineWidth = 1.7; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ext + 1, -10); ctx.lineTo(ext + 1 + lk, -10 - st); ctx.moveTo(ext + 5, -9); ctx.lineTo(ext + 7 + lk, -9 - st * 0.9); ctx.stroke();
+    eyes(ext + 1 + lk, ext + 7 + lk, -10 - st * 0.95, 1.7, fr.look, open);
+    ctx.strokeStyle = '#a88f6a'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.arc(ext + 5, -5.5, 2, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,150,170,.6)'; ctx.beginPath(); dot(ext + 1.5, -5, 1.4); ctx.fill();
+  }
+  ctx.save(); ctx.translate(-3, -11);
+  const sg = ctx.createRadialGradient(-3, -3, 1, 0, 0, 12);
+  sg.addColorStop(0, '#ffdcb4'); sg.addColorStop(1, '#d98d5c');
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0, 0, 11, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(140,80,50,.6)'; ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  for (let a = 0; a < 3.2 * Math.PI; a += 0.2){ const r = 9 - a * 0.85, px = Math.cos(a) * r, py = Math.sin(a) * r; if (a === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
+  ctx.stroke();
+  ctx.restore();
+}
+function friendHedgehog(fr, w, t, open){
+  if (w < 1){
+    ctx.globalAlpha = 1 - w;
+    ctx.fillStyle = '#8f6b55';
+    ctx.beginPath();
+    for (let i = 0; i <= 32; i++){ const a = i / 32 * TAU, r = i % 2 ? 10 : 14.5, px = Math.cos(a) * r, py = -11 + Math.sin(a) * r; if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#a98068'; ctx.beginPath(); ctx.arc(0, -11, 8.5, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  if (w <= 0) return;
+  ctx.globalAlpha = w;
+  const sn = fr.awake && !calm ? Math.sin(t * 9) * 0.5 : 0;
+  ctx.fillStyle = '#6e5244'; ctx.beginPath(); ctx.ellipse(-7, -1, 3, 2, 0, 0, TAU); ctx.ellipse(6, -1, 3, 2, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#8f6b55';
+  ctx.beginPath(); ctx.moveTo(-16, -3);
+  for (let i = 0; i <= 14; i++){ const a = Math.PI + i / 14 * Math.PI * 0.82, r = i % 2 ? 12 : 16.5; ctx.lineTo(-2 + Math.cos(a) * r, -5 + Math.sin(a) * r); }
+  ctx.lineTo(8, -2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#e9d0ae'; ctx.beginPath(); ctx.ellipse(8, -7, 8, 6, -0.15, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#2e2130'; ctx.beginPath(); dot(15.8 + sn * 0.4, -7.5, 1.9); ctx.fill();
+  if (open){
+    ctx.fillStyle = '#2e2130'; ctx.beginPath(); dot(9 + fr.look * 0.5, -9.5, 1.7); ctx.fill();
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); dot(9.6 + fr.look * 0.5, -10.2, 0.6); ctx.fill();
+  } else {
+    ctx.strokeStyle = '#3a2a33'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(7.5, -9.5); ctx.quadraticCurveTo(9, -8.4, 10.5, -9.5); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(255,150,170,.6)'; ctx.beginPath(); dot(11, -5, 1.6); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+function friendBunny(fr, w, t, open){
+  const up = calm ? lerp(10, -10, ease(w)) : lerp(10, -10, backOut(w));
+  const tw = fr.awake && !calm ? Math.pow(Math.max(0, Math.sin(t * 1.3 + fr.ph)), 8) * 0.35 : 0;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-40, -70, 80, 73); ctx.clip();
+  ctx.translate(0, up);
+  for (let sd = -1; sd <= 1; sd += 2){
+    ctx.save(); ctx.translate(sd * 4.5, -9); ctx.rotate(sd * (0.18 + (sd > 0 ? tw : 0)));
+    ctx.fillStyle = '#fbf6f0'; ctx.beginPath(); ctx.ellipse(0, -9, 3.8, 10, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(170,150,140,.35)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#f7c1cf'; ctx.beginPath(); ctx.ellipse(0, -8.5, 1.8, 7, 0, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  ctx.fillStyle = '#fbf6f0'; ctx.beginPath(); ctx.ellipse(0, 0, 11, 9.5, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(170,150,140,.35)'; ctx.lineWidth = 1; ctx.stroke();
+  if (w > 0.3){
+    eyes(-4, 4, -1.5, 1.8, fr.look, open);
+    ctx.fillStyle = '#f49ab4'; ctx.beginPath(); ctx.ellipse(fr.look * 0.4, 2.6, 1.7, 1.2, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(255,150,175,.5)'; ctx.beginPath(); dot(-6.5, 2.5, 1.8); dot(6.5, 2.5, 1.8); ctx.fill();
+    ctx.strokeStyle = 'rgba(150,120,120,.5)'; ctx.lineWidth = 0.7;
+    ctx.beginPath(); ctx.moveTo(-3, 3.5); ctx.lineTo(-10, 2.5); ctx.moveTo(-3, 4.3); ctx.lineTo(-10, 5); ctx.moveTo(3, 3.5); ctx.lineTo(10, 2.5); ctx.moveTo(3, 4.3); ctx.lineTo(10, 5); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.fillStyle = '#7ba567';
+  for (let i = -3; i <= 3; i++){
+    const x = i * 3.4, h = 4 + (i % 2 ? 2 : 0) + (3 - Math.abs(i)) * 0.8;
+    ctx.beginPath(); ctx.moveTo(x - 2.3, 4); ctx.quadraticCurveTo(x - 0.5, -h * 0.5, x + i * 0.6, -h); ctx.quadraticCurveTo(x + 0.6, -h * 0.4, x + 2.3, 4); ctx.fill();
+  }
+}
+function doSpin(){
+  if (G.spin >= 0) return;
+  G.spin = 0; b.glow = Math.max(b.glow, 0.8);
+  hearts(b.x, b.y - 18 * S, calm ? 2 : 5);
+  Snd.spin();
 }
 
 /* ================= логика ================= */
@@ -1163,20 +1539,35 @@ function startFly(){
   planSeeds();
   elCounter.classList.add('show');
   later(0.25, function(){ const f = flowers[0]; if (f && f.st === 0){ f.st = 1; f.g = 0; } });
-  later(0.85, showHint);
+  later(0.85, function(){ showHint('touch'); });
+}
+function goalOf(f){
+  if (f.st === 7) return { x: f.airX, y: f.airY, air: true };
+  if (f.st === 2 || (f.st === 1 && f.g > 0.3)) return { x: f.x, y: f.y, air: false };
+  return null;
+}
+function pickNear(x, y){
+  let best = null, bp = null, bd = Math.max(64, 76 * S);
+  for (const f of flowers){ const p = goalOf(f); if (!p) continue; const d = hyp(p.x - x, p.y - y); if (d < bd){ bd = d; best = f; bp = p; } }
+  return best ? { f: best, p: bp } : null;
 }
 function aim(x, y){
   G.idle = 0;
-  let best = null, bd = Math.max(64, 76 * S);
-  for (const f of flowers){
-    if (!(f.st === 2 || (f.st === 1 && f.g > 0.3))) continue;
-    const d = hyp(f.x - x, f.y - y);
-    if (d < bd){ bd = d; best = f; }
+  let h = pickNear(x, y);
+  if (h){
+    // касание рядом со спящим другом ведёт к другу, а не к соседней пыльце
+    const dh = hyp(h.p.x - x, h.p.y - y);
+    for (const fr of friends) if (!fr.awake && hyp(fr.x - x, fr.y - 14 * fr.s - y) < Math.min(dh, 44 * S)){ h = null; break; }
   }
-  ptr.target = best ? { x: best.x, y: best.y } : { x: clamp(x, lim.l, lim.r), y: clamp(y, lim.t, lim.b) };
+  if (h) ptr.target = { x: h.p.x, y: h.p.y, track: h.p.air ? h.f : null };
+  else ptr.target = { x: clamp(x, lim.l, lim.r), y: clamp(y, lim.t, lim.b), track: null };
 }
 function updFly(dt){
   G.idle += dt;
+  if (ptr.target && ptr.target.track){
+    const tf = ptr.target.track;
+    if (tf.st === 7){ ptr.target.x = tf.airX; ptr.target.y = tf.airY; } else ptr.target.track = null;
+  }
   let dvx = 0, dvy = 0;
   const kx = (keys.r ? 1 : 0) - (keys.l ? 1 : 0), ky = (keys.d ? 1 : 0) - (keys.u ? 1 : 0);
   if (kx || ky){
@@ -1189,48 +1580,87 @@ function updFly(dt){
   }
   const sp = moveB(dt, dvx, dvy, ptr.down ? 11 : 8);
   trail(dt, sp);
-  const cr = Math.max(28, 30 * S);
+  const cr = Math.max(28, 30 * S), hr = Math.max(34, 40 * S), lr = Math.max(80, 96 * S);
   let near = null, nd = 1e9;
   for (const f of flowers){
     if (G.state !== 'fly') break;
-    if (!(f.st === 2 || (f.st === 1 && f.g > 0.45))) continue;
-    const d = hyp(b.x - f.x, b.y - f.y);
-    if (d < cr){ collect(f); continue; }
+    const p = goalOf(f);
+    if (!p) continue;
+    const d = hyp(b.x - p.x, b.y - p.y);
+    if (f.mode === 0){
+      if ((f.st === 2 || f.g > 0.45) && d < cr){ collect(f, p.x, p.y); continue; }
+    } else if (f.mode === 1){
+      if (f.st === 2){
+        if (d < hr){
+          f.wake = Math.min(1, f.wake + dt / 0.95); G.idle = 0;
+          const tk = Math.floor(f.wake * 3);
+          if (tk > f.tick && tk < 3){ f.tick = tk; Snd.tick(tk - 1); }
+          if (f.wake >= 1){ collect(f, f.hx, f.hy - 6 * f.s); continue; }
+        } else { f.wake = Math.max(0, f.wake - dt * 0.35); f.tick = Math.floor(f.wake * 3); }
+      }
+    } else {
+      if (f.st === 2 && d < lr){ liftSeed(f); continue; }
+      if (f.st === 7){
+        if (d < cr + 4 * S){ collect(f, f.airX, f.airY); continue; }
+        if (!f.puffed && !calm && d < 84 * S && G.t - f.lt0 > 1.3){
+          f.puffed = true;
+          const dd = Math.max(1, d);
+          f.pvx = (f.airX - b.x) / dd * 170 * S; f.pvy = (f.airY - b.y) / dd * 110 * S;
+          Snd.puff();
+        }
+      }
+    }
     if (d < nd){ nd = d; near = f; }
   }
   G.nearest = near;
+  if (G.state === 'fly'){
+    // друг просыпается, только если бабочка задержалась рядом, а не пролетела мимо
+    const slow = hyp(b.vx, b.vy) < 110 * S;
+    for (const fr of friends){
+      if (fr.awake) continue;
+      if (slow && hyp(b.x - fr.x, b.y - (fr.y - 14 * fr.s)) < Math.max(40, 46 * S)) fr.acc = (fr.acc || 0) + dt;
+      else fr.acc = Math.max(0, (fr.acc || 0) - dt * 2);
+      if (fr.acc > 0.3) wakeFriend(fr, true);
+    }
+  }
   if (near && G.idle > 4.5 && G.state === 'fly'){
     G.guideAcc += dt * (calm ? 2 : 5);
     while (G.guideAcc >= 1){ G.guideAcc -= 1; guide(near); }
   } else G.guideAcc = 0;
-  if (G.hintOn) placeHint();
+  if (G.hint) placeHint();
 }
-function collect(f){
-  f.st = 3; f.bt = 0;
+function collect(f, px, py){
+  f.st = 3; f.bt = 0; f.wake = 1;
   G.count++; G.idle = 0;
   const n = G.count;
   setCounter(n, true);
-  flying.push({ x0: f.x, y0: f.y, t: 0 });
-  burst(f.x, f.y, calm ? 5 : 10, f.group === 0 ? PINKS : (f.group === 1 ? LILACS : GOLDS));
+  G.sunT = n / 18 * 0.85;
+  flying.push({ x0: px, y0: py, t: 0 });
+  burst(px, py, calm ? 5 : 10, f.group === 0 ? PINKS : (f.group === 1 ? LILACS : GOLDS));
+  if (f.mode === 2) burst(f.hx, f.hy, calm ? 2 : 5, GOLDS);
   Snd.collect(n - 1);
-  if (n === 1){ hideHint(); later(0.45, function(){ spawnGroup(0); }); }
+  doneHint(f.mode === 0 ? 'touch' : (f.mode === 1 ? 'sleep' : 'catch'));
+  if (n === 1) later(0.45, function(){ spawnGroup(0); });
   if (n === 6 || n === 12){ const st = n / 6; later(0.35, function(){ stageUp(st); }); }
   if (n === 18) startFinale(f);
 }
 function stageUp(st){
   if (G.state !== 'fly') return;
   G.stage = st;
-  if (st === 1) G.lilacT = 1; else G.goldT = 1;
+  if (st === 1){ G.lilacT = 1; G.beesT = 1; } else { G.goldT = 1; G.rainbowT = 1; }
   ring(st === 1 ? LILACS : GOLDS);
   Snd.stage(st);
   later(0.45, function(){ spawnGroup(st); });
+  if (st === 1) later(1.9, function(){ showHint('sleep'); });
+  else later(2.3, startGust);
 }
 function startFinale(f){
   G.state = 'finale'; G.stT = 0; G.originF = f; G.giltT = 1; G.th0 = null; G.melody = false;
   G.waveR = 0; G.waveT = 0; G.nearest = null;
   ptr.down = false; ptr.target = null; keys.l = keys.r = keys.u = keys.d = false;
   elCounter.classList.add('done');
-  hideHint();
+  G.sunT = 1;
+  clearHint();
 }
 function updFinale(dt){
   const ft = G.stT, o = G.originF;
@@ -1247,6 +1677,7 @@ function updFinale(dt){
     } else if (d.st === 6 && !d.woke && hyp(d.x - o.x, d.y - o.y) <= G.waveR){ d.woke = true; d.bt = 0; }
   }
   for (const f of flowers) if (f.st === 3 && f.pulse < 0 && hyp(f.x - o.x, f.y - o.y) <= G.waveR) f.pulse = 0;
+  for (const fr of friends) if (!fr.awake && hyp(fr.x - o.x, fr.y - o.y) <= G.waveR){ wakeFriend(fr, false); if (!calm) hearts(fr.x, fr.y - 22 * fr.s, 2); }
   if (wt > 0 && wt < 1){
     G.sparkAcc += dt * (calm ? 10 : 80);
     while (G.sparkAcc >= 1){
@@ -1281,6 +1712,9 @@ function ambient(dt, rate){
 }
 function showEnd(){
   G.state = 'end';
+  const n = G.friendsFound;
+  elFinalSub.textContent = n >= FRIEND_KINDS.length ? 'Ты нашла всех друзей луга!'
+    : (n === 0 ? 'В траве прячутся друзья. Найдёшь их?' : 'Друзей луга найдено: ' + n + ' из ' + FRIEND_KINDS.length);
   elFinal.classList.add('show'); elFinal.removeAttribute('aria-hidden');
   showBtn(elAgain);
 }
@@ -1314,6 +1748,9 @@ function updFlowers(dt){
       f.open = 0.32;
     } else if (f.st === 2){
       f.open = 0.32 + (calm ? 0 : 0.03 * Math.sin(G.t * 2 + f.ph));
+    } else if (f.st === 7){
+      f.open = 0.32;
+      updAir(f, dt);
     } else if (f.st === 3){
       f.bt += dt;
       f.open = calm ? lerp(0.32, 1, ease(f.bt / 0.5)) : 0.32 + 0.68 * backOut(Math.min(1, f.bt / 0.65));
@@ -1347,6 +1784,11 @@ function update(dt){
   G.lilac = approach(G.lilac, G.lilacT, dt / 0.9);
   G.gold = approach(G.gold, G.goldT, dt / 0.9);
   G.gilt = approach(G.gilt, G.giltT, dt / 0.9);
+  G.sun = approach(G.sun, G.sunT, dt * 0.15);
+  G.rainbow = approach(G.rainbow, G.rainbowT, dt / 2.5);
+  G.bees = approach(G.bees, G.beesT, dt / 2);
+  if (G.spin >= 0){ G.spin += dt; if (G.spin > 0.75) G.spin = -1; }
+  updGust(dt); updFriends(dt);
   const glowFloor = (G.state === 'finale' || G.state === 'end' || G.state === 'reset') ? 0.5 * G.gilt : 0;
   b.glow = Math.max(glowFloor, b.glow - dt * 1.5);
   updFlowers(dt); updParts(dt); updFlying(dt);
@@ -1358,16 +1800,19 @@ function newGame(){
   G.state = 'title'; G.stT = 0; G.count = 0; G.stage = 0;
   G.lilac = G.lilacT = G.gold = G.goldT = G.gilt = G.giltT = 0;
   G.idle = 0; G.waveR = 0; G.waveT = 0; G.originF = null; G.cocOpen = 0; G.cocRot = 0;
-  G.hintOn = false; G.nearest = null; G.guideAcc = G.sparkAcc = G.ambAcc = G.trailAcc = 0; G.th0 = null; G.melody = false;
+  G.hint = null; G.hintF = null; G.hintDone = {}; G.nearest = null;
+  G.sun = G.sunT = G.rainbow = G.rainbowT = G.bees = G.beesT = G.bend = 0; G.gust = null; G.spin = -1; G.friendsFound = 0; G.guideAcc = G.sparkAcc = G.ambAcc = G.trailAcc = 0; G.th0 = null; G.melody = false;
   b.x = coc.x; b.y = coc.y; b.vx = b.vy = 0; b.tilt = 0; b.ph = 0; b.amp = 0; b.open = 0.12; b.sc = 0.72; b.glow = 0; b.vis = false;
   ptr.down = false; ptr.target = null;
   flowers = []; seedOrder = [];
   planDecos();
+  planFriends();
+  elFinalSub.textContent = 'Друзей луга найдено: 0 из 4';
   setCounter(0, false);
   elCounter.classList.remove('show', 'done');
   elIntro.classList.remove('gone');
   elFinal.classList.remove('show'); elFinal.setAttribute('aria-hidden', 'true');
-  hideHint();
+  clearHint();
   showBtn(elOpen); hideBtn(elAgain);
 }
 
@@ -1379,17 +1824,39 @@ function setCounter(n, pop){
 }
 function showBtn(el){ el.classList.remove('hide'); el.disabled = false; el.removeAttribute('aria-hidden'); el.tabIndex = 0; }
 function hideBtn(el){ el.classList.add('hide'); el.disabled = true; el.setAttribute('aria-hidden', 'true'); el.tabIndex = -1; if (document.activeElement === el) el.blur(); }
-function showHint(){
-  if (G.count > 0 || G.state !== 'fly') return;
-  G.hintOn = true; placeHint(); elHint.classList.add('show');
+function showHint(kind){
+  if (G.state !== 'fly' || G.hintDone[kind]) return;
+  G.hint = kind; G.hintF = null; elHint.textContent = HINTS[kind];
+  placeHint();
 }
-function hideHint(){ G.hintOn = false; elHint.classList.remove('show'); }
+function doneHint(kind){ G.hintDone[kind] = true; if (G.hint === kind) clearHint(); }
+function clearHint(){ G.hint = null; G.hintF = null; elHint.classList.remove('show'); }
+function hintValid(f){
+  if (!f) return false;
+  if (G.hint === 'sleep') return f.mode === 1 && f.st === 2;
+  if (G.hint === 'catch') return f.st === 7;
+  return false;
+}
+function hintAnchor(){
+  if (G.hint === 'touch'){ const f = flowers[0]; return f && f.st !== 3 ? { x: f.x, y: f.y, s: f.s } : null; }
+  if (!hintValid(G.hintF)){
+    G.hintF = null; let bd = 1e9;
+    for (const f of flowers){
+      if (!hintValid(f)) continue;
+      const p = goalOf(f); const d = hyp(p.x - b.x, p.y - b.y);
+      if (d < bd){ bd = d; G.hintF = f; }
+    }
+  }
+  const f = G.hintF; if (!f) return null;
+  return f.st === 7 ? { x: f.airX, y: f.airY, s: Math.max(f.s, 0.95 * S) } : { x: f.x, y: f.y, s: f.s };
+}
 function placeHint(){
-  const f = flowers[0]; if (!f) return;
-  const s = f.s;
-  const x = clamp(f.x, safe.l + 80, W - safe.r - 80);
-  let y = f.y + 40 * s + 18, below = true;
-  if (y + 46 > H - safe.b - 8){ y = f.y - 36 * s - 18; below = false; }
+  const a = hintAnchor();
+  if (!a){ elHint.classList.remove('show'); return; }
+  elHint.classList.add('show');
+  const x = clamp(a.x, safe.l + 92, W - safe.r - 92);
+  let y = a.y + 40 * a.s + 18, below = true;
+  if (y + 46 > H - safe.b - 8){ y = a.y - 38 * a.s - 18; below = false; }
   elHint.classList.toggle('below', below);
   elHint.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) translate(-50%,' + (below ? '0' : '-100%') + ')';
 }
@@ -1426,16 +1893,18 @@ const Snd = {
     try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch (e){}
     if (this.ac && this.ac.state === 'running' && this.ac.suspend) this.ac.suspend();
   },
-  tone: function(m, at, dur, vol){
+  tone: function(m, at, dur, vol, slide){
     if (!this.on || !this.ac) return;
     const ac = this.ac, t0 = ac.currentTime + 0.02 + (at || 0), f = 440 * Math.pow(2, (m - 69) / 12);
     const o = ac.createOscillator(), g = ac.createGain();
-    o.type = 'sine'; o.frequency.value = f;
+    o.type = 'sine'; o.frequency.setValueAtTime(f, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(440 * Math.pow(2, (slide - 69) / 12), t0 + Math.min(0.25, dur * 0.5));
     g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.018); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     o.connect(g); g.connect(this.bus); o.start(t0); o.stop(t0 + dur + 0.05);
     const o2 = ac.createOscillator(), g2 = ac.createGain();
     o2.type = 'triangle'; o2.frequency.value = f * 2;
     g2.gain.setValueAtTime(0.0001, t0); g2.gain.linearRampToValueAtTime(vol * 0.16, t0 + 0.012); g2.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.45);
+    if (slide) return;
     o2.connect(g2); g2.connect(this.bus); o2.start(t0); o2.stop(t0 + dur);
   },
   collect: function(i){
@@ -1457,7 +1926,28 @@ const Snd = {
     seq.forEach(function(p, i){ self.tone(p[0], p[1], i === 5 ? 2.2 : 1.1, i === 5 ? 0.2 : 0.17); });
     [60, 67, 76].forEach(function(m){ self.tone(m, 0, 2.6, 0.045); });
   },
-  ping: function(){ this.tone(79, 0, 0.7, 0.12); }
+  ping: function(){ this.tone(79, 0, 0.7, 0.12); },
+  tick: function(k){ this.tone([76, 79, 83][clamp(k, 0, 2)], 0, 0.5, 0.08); },
+  spin: function(){ this.tone(84, 0, 0.3, 0.08); this.tone(88, 0.07, 0.3, 0.08); this.tone(91, 0.14, 0.5, 0.08); },
+  puff: function(){ this.tone(86, 0, 0.3, 0.05, 93); },
+  friend: function(kind){
+    if (kind === 'ladybug'){ this.tone(91, 0, 0.35, 0.08); this.tone(95, 0.09, 0.45, 0.07); }
+    else if (kind === 'snail'){ this.tone(67, 0, 0.9, 0.1, 72); }
+    else if (kind === 'hedgehog'){ this.tone(74, 0, 0.22, 0.1); this.tone(71, 0.12, 0.3, 0.09); this.tone(76, 0.26, 0.4, 0.08); }
+    else { this.tone(72, 0, 0.45, 0.1, 84); this.tone(88, 0.22, 0.5, 0.07); }
+  },
+  gust: function(){
+    if (!this.on || !this.ac) return;
+    const ac = this.ac, t0 = ac.currentTime + 0.02, len = Math.floor(ac.sampleRate * 1.25);
+    const buf = ac.createBuffer(1, len, ac.sampleRate), data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.8;
+    bp.frequency.setValueAtTime(500, t0); bp.frequency.linearRampToValueAtTime(1400, t0 + 0.6); bp.frequency.linearRampToValueAtTime(700, t0 + 1.2);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.16, t0 + 0.35); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.2);
+    src.connect(bp); bp.connect(g); g.connect(this.bus); src.start(t0); src.stop(t0 + 1.25);
+  }
 };
 
 /* ================= ввод ================= */
@@ -1472,6 +1962,7 @@ cv.addEventListener('pointerdown', function(e){
   if (ptr.down && e.pointerId !== ptr.id) return;
   ptr.down = true; ptr.id = e.pointerId;
   try { cv.setPointerCapture(e.pointerId); } catch (err){}
+  if (!pickNear(x, y) && hyp(x - b.x, y - b.y) < Math.max(32, 38 * S)){ doSpin(); G.idle = 0; return; }
   aim(x, y);
 }, { passive: false });
 cv.addEventListener('pointermove', function(e){
