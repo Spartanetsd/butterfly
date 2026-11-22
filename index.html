@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#57324f">
+<title>Крылья на рассвете</title>
+<style>
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font-family: system-ui, sans-serif; color: #462a3f; background: #a8b9a1; }
+.game { position: relative; isolation: isolate; width: 100%; height: 100vh; height: 100dvh; min-height: 250px; overflow: hidden; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; outline: none; }
+.hud { position: absolute; inset: max(12px, env(safe-area-inset-top)) clamp(12px, 4vw, 58px) auto; display: flex; justify-content: space-between; align-items: start; gap: 8px; pointer-events: none; }
+.score, .sound, footer { border-radius: 24px; background: #fff8e9f7; color: #482c42; box-shadow: 0 4px 18px #52345024; }
+.score { min-width: 102px; padding: 7px 12px; font-size: .86rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.gold { color: #996220; margin-right: 2px; }
+progress { appearance: none; display: block; width: 100%; height: 4px; margin: 3px 0; border: 0; border-radius: 99px; background: #ead9dd; accent-color: #a74b75; }
+progress::-webkit-progress-bar { background: #ead9dd; border-radius: 99px; }
+progress::-webkit-progress-value { background: #a74b75; border-radius: 99px; }
+progress::-moz-progress-bar { background: #a74b75; border-radius: 99px; }
+button { font: inherit; cursor: pointer; }
+.sound { margin-left: auto; pointer-events: auto; white-space: nowrap; border: 0; min-height: 44px; padding: 0 13px; font-size: .8rem; font-weight: 650; }
+.sound[aria-pressed="true"] { background: #57324f; color: #fff8e9; }
+.card { position: absolute; left: clamp(16px, 8vw, 140px); top: 50%; transform: translateY(-50%); width: min(410px, 44vw); padding: clamp(18px, 3.7vw, 46px); border-radius: 32px; background: #fff8eafa; box-shadow: 0 25px 70px #51365045; border: 1px solid #fffdfa; }
+h1 { font: 500 clamp(2.05rem, 5.7vw, 4.25rem)/.95 Georgia, serif; letter-spacing: -.055em; margin: 0 0 16px; }
+p { font-size: clamp(.88rem, 2.1vw, 1.05rem); line-height: 1.5; color: #694e61; margin: 0 0 19px; }
+#action { border: 0; border-radius: 100px; background: #603451; color: #fff8e9; min-height: 48px; padding: 10px 19px; font-weight: 750; box-shadow: 0 5px 16px #66315130; }
+#action span { padding-left: 8px; color: #ffd88e; }
+#action:hover { background: #794160; }
+button:focus-visible { outline: 3px solid #87436d; outline-offset: 4px; }
+footer { position: absolute; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); text-align: center; pointer-events: none; font-size: .83rem; padding: 8px 14px; }
+@media (max-width: 700px) and (orientation: portrait) {
+  .card { width: calc(100% - 32px); top: auto; bottom: max(18px, env(safe-area-inset-bottom)); transform: none; padding: clamp(18px, 6vw, 34px); }
+  h1 { font-size: clamp(2.25rem, 10vw, 3.75rem); margin-bottom: 12px; }
+}
+@media (max-height: 420px) {
+  .card { padding: 14px 18px; border-radius: 23px; }
+  h1 { font-size: clamp(1.8rem, 4.5vw, 2.3rem); margin-bottom: 7px; }
+  p { margin-bottom: 10px; }
+}
+</style>
+</head>
+<body>
+<main class="game">
+  <canvas id="field" tabindex="-1" aria-label="Цветущий луг"></canvas>
+  <header class="hud">
+    <div class="score" id="score" hidden>
+      <div aria-hidden="true"><span class="gold">✦</span> <span id="count">0 / 18</span></div>
+      <progress id="progress" value="0" max="18" aria-label="Собрано пыльцы"></progress>
+    </div>
+    <button id="sound" class="sound" type="button" aria-pressed="false" aria-label="Звук" title="Звук выключен">♪ <span id="sound-state">Выкл.</span></button>
+  </header>
+  <section class="card" id="card" aria-labelledby="title">
+    <h1 id="title">Крылья<br>на рассвете</h1>
+    <p id="description">В маленьком коконе кто-то готовится к своему первому полёту.</p>
+    <button id="action" type="button">Открыть кокон <span aria-hidden="true">✦</span></button>
+  </section>
+  <footer id="hint" role="status" hidden></footer>
+</main>
+<script>
+'use strict';
+
+const canvas = document.querySelector('#field');
+const ctx = canvas.getContext('2d');
+const card = document.querySelector('#card');
+const action = document.querySelector('#action');
+const score = document.querySelector('#score');
+const count = document.querySelector('#count');
+const progress = document.querySelector('#progress');
+const title = document.querySelector('#title');
+const description = document.querySelector('#description');
+const soundState = document.querySelector('#sound-state');
+const hint = document.querySelector('#hint');
+const sound = document.querySelector('#sound');
+const goal = 18;
+const colors = ['#f7bdc9', '#fff4da', '#cdb4f6', '#ffdb81', '#ed9eae'];
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const keys = new Set();
+const movement = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
+let state = 'intro';
+let width, height, scene, tick = 0, elapsed = 0, gathered = 0, audio, muted = true;
+let butterfly = { x: 0, y: 0, tilt: 0 };
+let target = null;
+let grains = [];
+let sparks = [];
+let trail = [];
+let lastTrail = 0;
+let celebration = 0;
+let round = 0;
+const chapterSize = 6;
+const chapters = ['#f7b7cd', '#c7b1ef', '#ffcf84'];
+const notes = [523, 587, 659, 784, 880, 1047];
+
+function random(seed) {
+  return () => {
+    seed = (Math.imul(1664525, seed) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+}
+
+function oval(x, y, rx, ry, color, angle = 0) {
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, angle, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function stroke(color, width, draw) {
+  ctx.beginPath();
+  draw();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+}
+
+function origin() {
+  const portrait = width <= 700 && height > width;
+  return { x: width * (portrait ? .55 : .74), y: height * (portrait ? .26 : .44) };
+}
+
+function drawFlower(x, y, size, color, stem, ground, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  stroke(stem, Math.max(1, size * .12), () => {
+    ctx.moveTo(-size, ground - y);
+    ctx.quadraticCurveTo(size, (ground - y) * .4, 0, 0);
+  });
+  oval(size * .4, size * 2, size * .38, size * .95, stem, .65);
+  ctx.rotate(rotation);
+  for (let petal = 0; petal < 5; petal++) {
+    ctx.rotate(Math.PI * 2 / 5);
+    oval(0, -size * .68, size * .47, size * .67, color);
+  }
+  oval(0, 0, size * .36, size * .33, '#e29d54');
+  oval(-size * .09, -size * .08, size * .14, size * .11, '#fff3b9');
+  ctx.restore();
+}
+
+function buildScene() {
+  const background = document.createElement('canvas');
+  background.width = canvas.width;
+  background.height = canvas.height;
+  const screen = ctx;
+  // Draw into the visible canvas, then keep a reusable copy of the landscape.
+  const sky = screen.createLinearGradient(0, 0, 0, height);
+  sky.addColorStop(0, '#a99ac7');
+  sky.addColorStop(.48, '#f4d9ca');
+  sky.addColorStop(.68, '#ffe5a9');
+  sky.addColorStop(1, '#88a576');
+  screen.fillStyle = sky;
+  screen.fillRect(0, 0, width, height);
+  const sunX = width * .79;
+  const sunY = height * .21;
+  const sun = Math.min(width, height) * .19;
+  const glow = screen.createRadialGradient(sunX, sunY, 0, sunX, sunY, sun);
+  glow.addColorStop(0, '#fff4bcdf');
+  glow.addColorStop(1, '#fff4bc00');
+  screen.fillStyle = glow;
+  screen.fillRect(0, 0, width, height);
+  oval(sunX, sunY, sun * .29, sun * .29, '#fff7c8');
+
+  const rng = random(82);
+  for (let i = 0; i < 22; i++) {
+    const x = rng() * width;
+    const y = height * (.09 + rng() * .42);
+    oval(x, y, 22 + rng() * width * .09, 1 + rng() * 6, '#fff5d223', -.05);
+  }
+  const hillColors = ['#98b6a1', '#7b9e88', '#638e75', '#4e7d60', '#36674b'];
+  hillColors.forEach((color, layer) => {
+    const baseline = height * (.51 + layer * .074);
+    screen.beginPath();
+    screen.moveTo(0, height);
+    for (let x = 0; x <= width + 8; x += 8) {
+      const y = baseline + Math.sin(x / width * 8 + layer * 1.9) * height * .039
+        + Math.sin(x / width * 15 + layer) * height * .014;
+      screen.lineTo(x, y);
+    }
+    screen.lineTo(width, height);
+    const wash = screen.createLinearGradient(0, baseline - height * .06, 0, height);
+    wash.addColorStop(0, color);
+    wash.addColorStop(1, layer < 3 ? color : '#2e5a44');
+    screen.fillStyle = wash;
+    screen.fill();
+  });
+  for (let i = 0; i < 540; i++) {
+    const depth = i / 539;
+    const x = rng() * width;
+    const y = height * (.67 + depth * .35) + (rng() - .5) * 43;
+    const size = (1.4 + depth * 13) * (.45 + rng() * .8);
+    if (i % 3 === 0) {
+      drawFlower(x, y, size, colors[i % colors.length], '#456849', y + size * (2 + rng() * 4), rng() * 6);
+    } else {
+      stroke(i % 2 ? '#79955f88' : '#284f3b88', Math.max(1, size * .17), () => {
+        screen.moveTo(x, y + size * 2);
+        screen.quadraticCurveTo(x + size * .2, y, x + size * .75, y - size);
+      });
+    }
+  }
+  background.getContext('2d').drawImage(canvas, 0, 0);
+  return background;
+}
+
+function resize() {
+  const oldWidth = width;
+  const oldHeight = height;
+  width = canvas.clientWidth;
+  height = canvas.clientHeight;
+  const density = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.round(width * density);
+  canvas.height = Math.round(height * density);
+  ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+  scene = buildScene();
+  if (oldWidth && state === 'flight') {
+    butterfly.x *= width / oldWidth;
+    butterfly.y *= height / oldHeight;
+    target = null;
+  }
+  trail = [];
+  sparks = [];
+}
+
+function chrysalis(x, y, open) {
+  const stemX = x + Math.min(110, width * .22);
+  stroke('#2e5941', 4, () => {
+    ctx.moveTo(stemX, height);
+    ctx.quadraticCurveTo(stemX + 44, y - 105, x, y - 46);
+    ctx.lineTo(x, y - 25);
+  });
+  oval(stemX + 5, y + 10, 9, 38, '#4a7953', .63);
+  oval(stemX - 4, y + 72, 10, 39, '#56865b', -.75);
+  const shell = ctx.createLinearGradient(x - 24, y, x + 24, y);
+  shell.addColorStop(0, '#507d54');
+  shell.addColorStop(.5, '#bdd493');
+  shell.addColorStop(1, '#719a62');
+  for (const side of [-1, 1]) {
+    ctx.save();
+    ctx.translate(x + side * 15 * open, y);
+    ctx.rotate(side * -.36 * open);
+    ctx.beginPath();
+    ctx.moveTo(0, -29);
+    ctx.bezierCurveTo(side * 31, -23, side * 27, 23, 0, 34);
+    ctx.lineTo(0, 16);
+    ctx.lineTo(side * 6 * open, 7);
+    ctx.lineTo(0, 0);
+    ctx.lineTo(side * 7 * open, -10);
+    ctx.closePath();
+    ctx.fillStyle = shell;
+    ctx.fill();
+    ctx.restore();
+  }
+  if (open < .12) {
+    for (let i = 0; i < 5; i++) {
+      stroke('#335a404a', 1.2, () => {
+        ctx.moveTo(-16 + Math.abs(i - 1) * 2 + x, y - 13 + i * 9);
+        ctx.quadraticCurveTo(x, y - 7 + i * 9, x + 14 - Math.abs(i - 1) * 2, y - 12 + i * 9);
+      });
+    }
+  }
+}
+
+function drawButterfly(x, y, scale, tilt, time) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(tilt);
+  ctx.scale(scale, scale);
+  const flap = reducedMotion ? .91 : .70 + .29 * Math.cos(time * 13);
+  for (const side of [-1, 1]) {
+    ctx.save();
+    ctx.scale(side * flap, 1);
+    ctx.lineWidth = 1.8;
+    ctx.strokeStyle = '#794865';
+    const wing = ctx.createLinearGradient(2, 5, 45, -25);
+    wing.addColorStop(0, '#ef9bad');
+    wing.addColorStop(.55, '#ffd1c4');
+    wing.addColorStop(1, chapters[Math.min(2, Math.floor(gathered / chapterSize))]);
+    ctx.beginPath();
+    ctx.moveTo(3, 3);
+    ctx.bezierCurveTo(13, 1, 47, 10, 34, 26);
+    ctx.bezierCurveTo(24, 36, 8, 21, 3, 9);
+    ctx.fillStyle = '#e99ab5';
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(3, 3);
+    ctx.bezierCurveTo(7, -23, 34, -40, 46, -27);
+    ctx.bezierCurveTo(58, -12, 38, 13, 3, 8);
+    ctx.fillStyle = wing;
+    ctx.fill();
+    ctx.stroke();
+    oval(27, -12, 11, 6, '#ffe9b7', -.55);
+    oval(26, 18, 6, 5, '#ffd4cc', .4);
+    oval(38, -19, 2.3, 2.3, '#fff9e1');
+    oval(43, -13, 1.5, 1.5, '#fff9e1');
+    ctx.restore();
+  }
+  oval(0, 7, 4.4, 13, '#634552');
+  oval(0, -7, 7.4, 7, '#745060');
+  for (const side of [-1, 1]) {
+    stroke('#634552', 1.5, () => {
+      ctx.moveTo(side * 3, -11);
+      ctx.quadraticCurveTo(side * 6, -19, side * 11, -20);
+    });
+    oval(side * 11, -20, 1.9, 1.9, '#634552');
+    oval(side * 2.7, -8, 1.1, 1.3, '#fff4de');
+    oval(side * 4, -4.5, 1.4, .85, '#faa9b9');
+  }
+  stroke('#ffe5d0', 1, () => {
+    ctx.moveTo(-2, -5.5);
+    ctx.quadraticCurveTo(0, -3.7, 2, -5.5);
+  });
+  ctx.restore();
+}
+
+function populate() {
+  const rng = random(274 + round * 31);
+  grains = Array.from({ length: goal }, (_, i) => ({
+    slot: i % chapterSize,
+    chapter: Math.floor(i / chapterSize),
+    offsetX: rng() - .5,
+    offsetY: rng() - .5,
+    phase: rng() * 6,
+    taken: false
+  }));
+}
+
+function grainPosition(grain) {
+  const portrait = width < 540;
+  const columns = portrait ? 2 : 3;
+  const rows = chapterSize / columns;
+  const padX = Math.min(76, width * .18);
+  const padY = Math.min(85, height * .25);
+  const u = (grain.slot % columns + .5 + grain.offsetX * .46) / columns;
+  const v = (Math.floor(grain.slot / columns) + .5 + grain.offsetY * .46) / rows;
+  const offset = reducedMotion ? 0 : Math.sin(tick * 2 + grain.phase) * 4;
+  return { x: padX + u * (width - 2 * padX), y: padY + v * (height - 2 * padY) + offset };
+}
+
+function star(x, y, r, color) {
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const angle = i * Math.PI / 4 - Math.PI / 2;
+    const radius = i % 2 ? r * .34 : r;
+    ctx.lineTo(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawPollen() {
+  const chapter = Math.floor(gathered / chapterSize);
+  for (const grain of grains) {
+    if (grain.taken || grain.chapter !== chapter) continue;
+    const { x, y } = grainPosition(grain);
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, 25);
+    glow.addColorStop(0, '#fff7bce0');
+    glow.addColorStop(1, '#ffca6600');
+    ctx.fillStyle = glow;
+    ctx.fillRect(x - 25, y - 25, 50, 50);
+    for (let i = 0; i < 5; i++) {
+      const angle = grain.phase + i * Math.PI * 2 / 5;
+      oval(x + Math.cos(angle) * 10, y + Math.sin(angle) * 10, 7, 4,
+        chapters[chapter], angle);
+    }
+    oval(x, y, 8, 8, '#82506c');
+    star(x, y, 6.6, '#fff4b4');
+  }
+  for (const spark of sparks) {
+    ctx.globalAlpha = Math.max(0, spark.life / spark.duration);
+    star(spark.x, spark.y, spark.size, spark.color);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function burst(x, y, color, amount = 12, duration = .75) {
+  if (reducedMotion) return;
+  for (let i = 0; i < amount; i++) {
+    sparks.push({
+      x, y, color: i % 2 ? color : '#fff1bd', angle: i * Math.PI * 2 / amount,
+      life: duration, duration, size: 2 + i % 5, speed: 48 + i % 4 * 25
+    });
+  }
+}
+
+function drawTrail() {
+  for (const point of trail) {
+    ctx.globalAlpha = Math.max(0, point.life / .46) * .78;
+    star(point.x, point.y, point.size, point.color);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFinale() {
+  const center = origin();
+  const rng = random(444);
+  const bloom = reducedMotion ? 1 : Math.min(1, celebration / 1.1);
+  for (let i = 0; i < 27; i++) {
+    const spread = Math.min(width * .28, 230);
+    const x = center.x + (rng() - .5) * 2 * spread;
+    const y = center.y + 22 + rng() * Math.min(115, height * .22);
+    const size = 6 + rng() * 15;
+    const angle = rng() * 6;
+    const lift = Math.min(1, bloom * 1.6 - i / 55);
+    if (lift > 0) drawFlower(x, y + (1 - lift) * 50, size * lift, colors[i % 5], '#477754', height, angle);
+  }
+  drawButterfly(center.x, center.y - 22 + (reducedMotion ? 0 : Math.sin(tick * 3) * 5), 1.22, .11, tick);
+}
+
+function chime(frequency, delay = 0) {
+  if (muted || !audio || audio.state !== 'running') return;
+  const note = audio.createOscillator();
+  const volume = audio.createGain();
+  const now = audio.currentTime + delay;
+  note.type = 'sine';
+  note.frequency.value = frequency;
+  volume.gain.setValueAtTime(.001, now);
+  volume.gain.exponentialRampToValueAtTime(.075, now + .015);
+  volume.gain.exponentialRampToValueAtTime(.001, now + .36);
+  note.connect(volume).connect(audio.destination);
+  note.start(now);
+  note.stop(now + .38);
+}
+
+function beginFlight() {
+  state = 'flight';
+  const start = origin();
+  butterfly = { x: start.x, y: Math.max(50, start.y - 65), tilt: 0 };
+  target = null;
+  populate();
+  score.hidden = false;
+  hint.hidden = false;
+  hint.textContent = matchMedia('(pointer: coarse)').matches
+    ? 'Коснись золотой звёздочки'
+    : 'Подлети к звёздочке · Мышь или стрелки';
+  canvas.focus({ preventScroll: true });
+}
+
+function finish() {
+  state = 'won';
+  celebration = 0;
+  const center = origin();
+  burst(center.x, center.y - 22, '#ffc6d2', 36, 1.5);
+  title.textContent = 'Ты разбудила луг!';
+  description.textContent = 'Ты собрала всю пыльцу. Смотри, сколько цветов распустилось!';
+  action.innerHTML = 'Ещё полёт <span aria-hidden="true">✦</span>';
+  card.hidden = false;
+  hint.hidden = true;
+  action.focus({ preventScroll: true });
+  [784, 988, 1175, 1568].forEach((note, i) => chime(note, .18 + i * .13));
+}
+
+function updateFlight(dt) {
+  const dx = Number(keys.has('ArrowRight') || keys.has('KeyD')) - Number(keys.has('ArrowLeft') || keys.has('KeyA'));
+  const dy = Number(keys.has('ArrowDown') || keys.has('KeyS')) - Number(keys.has('ArrowUp') || keys.has('KeyW'));
+  if (dx || dy) target = null;
+  let vx = dx * 280;
+  let vy = dy * 280;
+  if (dx && dy) { vx *= Math.SQRT1_2; vy *= Math.SQRT1_2; }
+  if (target) {
+    const tx = target.x - butterfly.x;
+    const ty = target.y - butterfly.y;
+    const distance = Math.hypot(tx, ty);
+    const speed = Math.min(7, 650 / Math.max(1, distance));
+    vx = tx * speed;
+    vy = ty * speed;
+  }
+  butterfly.x = Math.max(22, Math.min(width - 22, butterfly.x + vx * dt));
+  butterfly.y = Math.max(50, Math.min(height - 38, butterfly.y + vy * dt));
+  butterfly.tilt += (Math.max(-.35, Math.min(.35, vx / 650)) - butterfly.tilt) * Math.min(1, dt * 8);
+  if (!reducedMotion && Math.hypot(vx, vy) > 30 && tick - lastTrail > .045) {
+    lastTrail = tick;
+    trail.push({ x: butterfly.x, y: butterfly.y + 9, life: .46, size: 4, color: '#ffe6ac' });
+  }
+  const chapter = Math.floor(gathered / chapterSize);
+  for (const grain of grains) {
+    if (grain.taken || grain.chapter !== chapter) continue;
+    const point = grainPosition(grain);
+    if (Math.hypot(point.x - butterfly.x, point.y - butterfly.y) > 34) continue;
+    grain.taken = true;
+    gathered++;
+    count.textContent = gathered + ' / ' + goal;
+    progress.value = gathered;
+    chime(notes[(gathered - 1) % chapterSize]);
+    burst(point.x, point.y, chapters[chapter]);
+    if (gathered === goal) {
+      finish();
+      break;
+    }
+    if (gathered % chapterSize === 0) {
+      burst(point.x, point.y, chapters[chapter + 1], 24, 1);
+      hint.textContent = gathered === 6 ? 'Крылья стали сиреневыми!' : 'Крылья засияли золотом!';
+      hint.hidden = false;
+      break;
+    }
+    hint.hidden = true;
+  }
+}
+
+function frame(now) {
+  const dt = Math.min(.05, (now - frame.previous) / 1000 || 0);
+  frame.previous = now;
+  tick += dt;
+  if (state === 'hatch') {
+    elapsed += dt;
+    if (elapsed >= (reducedMotion ? .45 : 1.55)) {
+      beginFlight();
+      burst(butterfly.x, butterfly.y, chapters[0], 20);
+    }
+  }
+  if (state === 'flight') updateFlight(dt);
+  ctx.drawImage(scene, 0, 0, width, height);
+  if (state === 'intro' || state === 'hatch') {
+    const start = origin();
+    const open = state === 'hatch' ? Math.min(1, elapsed / (reducedMotion ? .24 : .85)) : 0;
+    chrysalis(start.x, start.y, open);
+    if (open > .25) {
+      const phase = Math.min(1, Math.max(0, (elapsed - .19) / (reducedMotion ? .26 : 1.36)));
+      const emerge = 1 - (1 - phase) ** 2;
+      drawButterfly(start.x, start.y + (Math.max(50, start.y - 65) - start.y) * emerge, .2 + .74 * emerge, 0, tick);
+    }
+  } else {
+    drawTrail();
+    if (state === 'won') {
+      celebration += dt;
+      drawFinale();
+    } else {
+      drawButterfly(butterfly.x, butterfly.y, .94, butterfly.tilt, tick);
+    }
+    drawPollen();
+  }
+  for (const spark of sparks) {
+    spark.life -= dt;
+    spark.x += Math.cos(spark.angle) * spark.speed * dt;
+    spark.y += Math.sin(spark.angle) * spark.speed * dt;
+  }
+  sparks = sparks.filter(spark => spark.life > 0);
+  for (const point of trail) point.life -= dt;
+  trail = trail.filter(point => point.life > 0);
+  requestAnimationFrame(frame);
+}
+
+action.addEventListener('click', () => {
+  if (state !== 'intro' && state !== 'won') return;
+  const replay = state === 'won';
+  card.hidden = true;
+  keys.clear();
+  gathered = 0;
+  count.textContent = '0 / ' + goal;
+  progress.value = 0;
+  score.hidden = true;
+  sparks = [];
+  trail = [];
+  if (replay) {
+    round++;
+    beginFlight();
+  } else {
+    elapsed = 0;
+    state = 'hatch';
+    hint.hidden = true;
+    chime(440);
+  }
+});
+
+sound.addEventListener('click', async () => {
+  if (muted) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    try {
+      audio ??= new AudioContext();
+      await audio.resume();
+    } catch {
+      return;
+    }
+  }
+  muted = !muted;
+  sound.setAttribute('aria-pressed', String(!muted));
+  soundState.textContent = muted ? 'Выкл.' : 'Вкл.';
+  sound.title = muted ? 'Звук выключен' : 'Звук включён';
+  chime(659);
+});
+
+function aim(event) {
+  if (state !== 'flight' || !event.isPrimary) return;
+  const rect = canvas.getBoundingClientRect();
+  target = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+canvas.addEventListener('pointerdown', event => {
+  if (state === 'flight' && event.isPrimary && event.pointerType !== 'mouse') {
+    canvas.setPointerCapture(event.pointerId);
+  }
+  aim(event);
+});
+canvas.addEventListener('pointermove', aim);
+canvas.addEventListener('pointercancel', () => { target = null; });
+window.addEventListener('keydown', event => {
+  if (state !== 'flight' || !movement.includes(event.code)) return;
+  event.preventDefault();
+  keys.add(event.code);
+});
+window.addEventListener('keyup', event => keys.delete(event.code));
+window.addEventListener('blur', () => {
+  keys.clear();
+  target = null;
+});
+window.addEventListener('resize', resize);
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
